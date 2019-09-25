@@ -182,7 +182,7 @@ class _MobileNetV3Block(keras.layers.Layer):
             keras.layers.BatchNormalization(),
             keras.layers.Lambda(lambda x: _activation(x, self.activation)),
         ]
-        # SE goes after activation. This is where paper is unclear. In e.g.
+        # SE goes after activation. This is where the paper is unclear. In e.g.
         # MNASNet, for instance, SE goes after activation. I've done runs
         # with activation both before and after, and thus far, the results were
         # better with activation before SE. Still not as good as the paper
