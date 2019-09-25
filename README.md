@@ -11,3 +11,7 @@ LR. Cosine schedule with warmup.
 Because TF is much slower than PyTorch, training for the Keras model is still
 underway, but the model is straight-across port, so it should, hypothetically,
 achieve the same accuracy results.
+
+## Contributions
+
+Contributions are welcome. Please use Black to format the code.
