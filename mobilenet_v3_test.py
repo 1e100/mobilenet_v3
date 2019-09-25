@@ -1,9 +1,11 @@
+#!/usr/bin/env python3
+
 import doctest
 import unittest
 
 
 def load_tests(loader, tests, ignore):
-    tests.addTests(doctest.DocTestSuite("models.mobilenet_v3"))
+    tests.addTests(doctest.DocTestSuite("mobilenet_v3"))
     return tests
 
 
