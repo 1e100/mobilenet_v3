@@ -1,5 +1,5 @@
-# MobileNet V3 implementation.
-# Paper: https://arxiv.org/pdf/1905.02244.pdf
+""" A Keras / TF 2.0 implementation of MobileNet V3.
+    Paper: https://arxiv.org/pdf/1905.02244.pdf. """
 
 from typing import Tuple, Union, Dict
 import collections
