@@ -1,5 +1,5 @@
-""" A Keras / TF 2.0 implementation of MobileNet V3.
-    Paper: https://arxiv.org/pdf/1905.02244.pdf. """
+""" MobileNet V3 implementation.
+    Paper: https://arxiv.org/pdf/1905.02244.pdf """
 
 from typing import Tuple, Union, Dict
 import collections
@@ -7,48 +7,16 @@ import collections
 import tensorflow as tf
 from tensorflow import keras
 
-CONFIG = {
-    "large": [
-        # in_ch, exp, out_ch, k, s, se, activation
-        [16, 16, 16, 3, 1, None, "relu"],
-        [16, 64, 24, 3, 2, None, "relu"],
-        [24, 72, 24, 3, 1, None, "relu"],
-        [24, 72, 40, 5, 2, 0.25, "relu"],
-        [40, 120, 40, 5, 1, 0.25, "relu"],
-        [40, 120, 40, 5, 1, 0.25, "relu"],
-        [40, 240, 80, 3, 2, None, "hardswish"],
-        [80, 200, 80, 3, 1, None, "hardswish"],
-        [80, 184, 80, 3, 1, None, "hardswish"],
-        [80, 184, 80, 3, 1, None, "hardswish"],
-        [80, 480, 112, 3, 1, 0.25, "hardswish"],
-        [112, 672, 112, 3, 1, 0.25, "hardswish"],
-        [112, 672, 160, 5, 2, 0.25, "hardswish"],
-        [160, 960, 160, 5, 1, 0.25, "hardswish"],
-        [160, 960, 160, 5, 1, 0.25, "hardswish"],
-    ],
-    "small": [
-        # in_ch, exp, out_ch, k, s, se, activation
-        [16, 16, 16, 3, 2, 0.25, "relu"],
-        [16, 72, 24, 3, 2, None, "relu"],
-        [24, 88, 24, 3, 1, None, "relu"],
-        [24, 96, 40, 5, 2, 0.25, "hardswish"],
-        [40, 240, 40, 5, 1, 0.25, "hardswish"],
-        [40, 240, 40, 5, 1, 0.25, "hardswish"],
-        [40, 120, 48, 5, 1, 0.25, "hardswish"],
-        [48, 144, 48, 5, 1, 0.25, "hardswish"],
-        [48, 288, 96, 5, 2, 0.25, "hardswish"],
-        [96, 576, 96, 5, 1, 0.25, "hardswish"],
-        [96, 576, 96, 5, 1, 0.25, "hardswish"],
-    ],
-}
+import mobilenet_v3_configs as conf
 
+_REGULARIZER = keras.regularizers.l2(1e-5)
+_CONV_INITIALIZER = keras.initializers.VarianceScaling(seed=42)
 
 # @tf.function
 def hard_sigmoid(x):
     return tf.nn.relu6(x + 3.0) / 6.0
 
 
-# @tf.function
 def hard_swish(x):
     return hard_sigmoid(x) * x
 
@@ -79,8 +47,22 @@ class _SqueezeAndExcitation(keras.layers.Layer):
         self.channels = channels
         self.se_ratio = se_ratio
         reduced_ch = _round_to_multiple_of(channels * se_ratio, 8)
-        self.reduce = keras.layers.Conv2D(reduced_ch, 1, padding="same", use_bias=True)
-        self.expand = keras.layers.Conv2D(channels, 1, padding="same", use_bias=True)
+        self.reduce = keras.layers.Conv2D(
+            reduced_ch,
+            1,
+            padding="same",
+            kernel_initializer=_CONV_INITIALIZER,
+            kernel_regularizer=_REGULARIZER,
+            use_bias=False,
+        )
+        self.expand = keras.layers.Conv2D(
+            channels,
+            1,
+            padding="same",
+            kernel_initializer=_CONV_INITIALIZER,
+            kernel_regularizer=_REGULARIZER,
+            use_bias=False,
+        )
 
     def call(self, x):
         y = tf.math.reduce_mean(x, axis=[1, 2], keepdims=True)
@@ -118,6 +100,8 @@ class _ConvBnActivationBlock(keras.layers.Layer):
             strides=stride,
             padding="same",
             dilation_rate=dilation,
+            kernel_initializer=_CONV_INITIALIZER,
+            kernel_regularizer=_REGULARIZER,
             use_bias=False,
         )
         self.bn = keras.layers.BatchNormalization()
@@ -166,23 +150,38 @@ class _MobileNetV3Block(keras.layers.Layer):
 
         self.apply_residual = allow_residual and (in_ch == out_ch and stride == 1)
 
-        self.layers = [
-            # Pointwise
-            keras.layers.Conv2D(exp_ch, 1, padding="same", use_bias=False),
-            keras.layers.BatchNormalization(),
-            keras.layers.Lambda(lambda x: _activation(x, self.activation)),
+        self.layers = []
+
+        if in_ch != exp_ch:
+            self.layers += [
+                # Pointwise
+                keras.layers.Conv2D(
+                    exp_ch,
+                    1,
+                    padding="same",
+                    kernel_initializer=_CONV_INITIALIZER,
+                    kernel_regularizer=_REGULARIZER,
+                    use_bias=False,
+                ),
+                keras.layers.BatchNormalization(),
+                keras.layers.Lambda(lambda x: _activation(x, self.activation)),
+            ]
+
+        self.layers += [
             # Depthwise
             keras.layers.DepthwiseConv2D(
                 kernel_size,
                 strides=stride,
                 padding="same",
                 dilation_rate=dilation,
+                depthwise_initializer=_CONV_INITIALIZER,
+                depthwise_regularizer=_REGULARIZER,
                 use_bias=False,
             ),
             keras.layers.BatchNormalization(),
             keras.layers.Lambda(lambda x: _activation(x, self.activation)),
         ]
-        # SE goes after activation. This is where the paper is unclear. In e.g.
+        # SE goes after activation. This is where paper is unclear. In e.g.
         # MNASNet, for instance, SE goes after activation. I've done runs
         # with activation both before and after, and thus far, the results were
         # better with activation before SE. Still not as good as the paper
@@ -190,7 +189,14 @@ class _MobileNetV3Block(keras.layers.Layer):
         if se_ratio is not None:
             self.layers += [_SqueezeAndExcitation(exp_ch, se_ratio)]
         self.layers += [  # Linear pointwise. Note that there's no activation afterwards.
-            keras.layers.Conv2D(out_ch, 1, padding="same", use_bias=False),
+            keras.layers.Conv2D(
+                out_ch,
+                1,
+                padding="same",
+                kernel_initializer=_CONV_INITIALIZER,
+                kernel_regularizer=_REGULARIZER,
+                use_bias=False,
+            ),
             keras.layers.BatchNormalization(),
         ]
 
@@ -223,12 +229,13 @@ def create_mobilenet_v3(
     num_classes: int = 1000,
     dropout: float = 0.2,  # Paper says 0.8, but they probably mean keep probability.
     model_type: str = "small",
+    has_classifier: bool = True,
 ) -> keras.Model:
     assert alpha > 0.0
     assert num_classes > 1
-    assert model_type in CONFIG
+    assert model_type in conf.CONFIG
 
-    config = CONFIG[model_type]
+    config = conf.CONFIG[model_type]
     # Scale the channels, forcing them to be multiples of 8, biased towards
     # the higher number of channels.
     for c in config:
@@ -248,7 +255,7 @@ def create_mobilenet_v3(
 
     # Build the bottleneck stack.
     for idx, c in enumerate(config):
-        in_ch, exp_ch, out_ch, kernel_size, stride, se_ratio, activation = c
+        in_ch, exp_ch, out_ch, kernel_size, stride, dilation, se_ratio, activation = c
         x = _MobileNetV3Block(
             in_ch,
             exp_ch,
@@ -261,28 +268,39 @@ def create_mobilenet_v3(
         )(x)
 
     # Build the classifier.
+    shallow_tail = any(x in model_type for x in ["_segmentation", "_detection"])
     if model_type == "large":
-        classifier_inner_ch = 960
+        last_conv_ch = 960 if not shallow_tail else 480
     elif model_type == "small":
-        classifier_inner_ch = 576
+        last_conv_ch = 576 if not shallow_tail else 288
     else:
         raise ValueError("Invalid model type")
 
     if alpha < 1.0:
-        classifier_inner_ch = _round_to_multiple_of(classifier_inner_ch * alpha, 8)
+        last_conv_ch = _round_to_multiple_of(last_conv_ch * alpha, 8)
 
     x = _ConvBnActivationBlock(
-        classifier_inner_ch,
-        1,
-        stride=1,
-        padding="same",
-        dilation=1,
-        activation="hardswish",
+        last_conv_ch, 1, stride=1, padding="same", dilation=1, activation="hardswish"
     )(x)
-    x = keras.layers.GlobalAveragePooling2D()(x)
-    x = keras.layers.Flatten()(x)
-    x = keras.layers.Dense(1280, activation=hard_swish)(x)
-    x = keras.layers.Dropout(dropout)(x)
-    output = keras.layers.Dense(num_classes)(x)
+
+    if has_classifier:
+        x = keras.layers.GlobalAveragePooling2D()(x)
+        x = keras.layers.Flatten()(x)
+        x = keras.layers.Dense(
+            1280,
+            activation=hard_swish,
+            kernel_initializer=_CONV_INITIALIZER,
+            kernel_regularizer=_REGULARIZER,
+            bias_regularizer=_REGULARIZER,
+        )(x)
+        x = keras.layers.Dropout(dropout)(x)
+        output = keras.layers.Dense(
+            num_classes,
+            kernel_initializer=_CONV_INITIALIZER,
+            kernel_regularizer=_REGULARIZER,
+            bias_regularizer=_REGULARIZER,
+        )(x)
+    else:
+        output = x
 
     return keras.Model(inputs=[input], outputs=[output])

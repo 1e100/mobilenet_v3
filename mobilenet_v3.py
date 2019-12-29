@@ -1,5 +1,5 @@
-""" PyTorch implementation of MobileNet V3.
-    Paper: https://arxiv.org/pdf/1905.02244.pdf."""
+# MobileNet V3 implementation.
+# Paper: https://arxiv.org/pdf/1905.02244.pdf
 
 from typing import Tuple, Union
 import collections
@@ -7,40 +7,7 @@ import collections
 import torch
 from torch import nn
 
-CONFIG = {
-    "large": [
-        # in_ch, exp, out_ch, k, s, se, activation
-        [16, 16, 16, 3, 1, None, "relu"],
-        [16, 64, 24, 3, 2, None, "relu"],
-        [24, 72, 24, 3, 1, None, "relu"],
-        [24, 72, 40, 5, 2, 0.25, "relu"],
-        [40, 120, 40, 5, 1, 0.25, "relu"],
-        [40, 120, 40, 5, 1, 0.25, "relu"],
-        [40, 240, 80, 3, 2, None, "hardswish"],
-        [80, 200, 80, 3, 1, None, "hardswish"],
-        [80, 184, 80, 3, 1, None, "hardswish"],
-        [80, 184, 80, 3, 1, None, "hardswish"],
-        [80, 480, 112, 3, 1, 0.25, "hardswish"],
-        [112, 672, 112, 3, 1, 0.25, "hardswish"],
-        [112, 672, 160, 5, 2, 0.25, "hardswish"],
-        [160, 960, 160, 5, 1, 0.25, "hardswish"],
-        [160, 960, 160, 5, 1, 0.25, "hardswish"],
-    ],
-    "small": [
-        # in_ch, exp, out_ch, k, s, se, activation
-        [16, 16, 16, 3, 2, 0.25, "relu"],
-        [16, 72, 24, 3, 2, None, "relu"],
-        [24, 88, 24, 3, 1, None, "relu"],
-        [24, 96, 40, 5, 2, 0.25, "hardswish"],
-        [40, 240, 40, 5, 1, 0.25, "hardswish"],
-        [40, 240, 40, 5, 1, 0.25, "hardswish"],
-        [40, 120, 48, 5, 1, 0.25, "hardswish"],
-        [48, 144, 48, 5, 1, 0.25, "hardswish"],
-        [48, 288, 96, 5, 2, 0.25, "hardswish"],
-        [96, 576, 96, 5, 1, 0.25, "hardswish"],
-        [96, 576, 96, 5, 1, 0.25, "hardswish"],
-    ],
-}
+import mobilenet_v3_configs as conf
 
 
 def hard_sigmoid(x: torch.Tensor, inplace: bool = True) -> torch.Tensor:
@@ -79,11 +46,9 @@ class _SqueezeAndExcitation(nn.Module):
             raise ValueError("Squeeze and excitation depth ratio must be positive.")
         super().__init__()
         reduced_ch = _round_to_multiple_of(channels * se_ratio, 8)
-        # Note: some implementations do not use bias on SE. However, the
-        # reference implementation of MNASNet (predecessor to MNv3 in some
-        # ways) does use it, so we use it here.
-        self.reduce = nn.Conv2d(channels, reduced_ch, 1, bias=True)
-        self.expand = nn.Conv2d(reduced_ch, channels, 1, bias=True)
+        # Note: official implementation uses bias on SE.
+        self.reduce = nn.Conv2d(channels, reduced_ch, 1, bias=False)
+        self.expand = nn.Conv2d(reduced_ch, channels, 1, bias=False)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         y = x.mean([2, 3], keepdim=True)
@@ -129,6 +94,7 @@ class _MobileNetV3Block(nn.Module):
         out_ch,
         kernel_size,
         stride,
+        dilation=1,
         se_ratio=None,
         activation="relu",
         allow_residual=True,
@@ -138,43 +104,56 @@ class _MobileNetV3Block(nn.Module):
         assert kernel_size in [3, 5]
         activation = _get_activation(activation)
         self.apply_residual = allow_residual and (in_ch == out_ch and stride == 1)
+        # Features are collected from pointwise immediately before the next
+        # downsampling. If there's no downsampling, we don't keep the features.
+        self.keep_features = stride > 1
+        self.se_ratio = se_ratio
 
-        layers = [
-            # Pointwise
-            nn.Conv2d(in_ch, exp_ch, 1, bias=False),
-            nn.BatchNorm2d(exp_ch),
-            activation(inplace=True),  # ?
-            # Depthwise
+        if in_ch != exp_ch:
+            # Pointwise expand.
+            self.expand = nn.Sequential(
+                nn.Conv2d(in_ch, exp_ch, 1, bias=False),
+                nn.BatchNorm2d(exp_ch),
+                activation(inplace=True),
+            )
+        else:
+            self.expand = None
+
+        effective_kernel_size = (kernel_size - 1) * dilation + 1
+        self.dw_conv = nn.Sequential(
             nn.Conv2d(
                 exp_ch,
                 exp_ch,
                 kernel_size,
-                padding=kernel_size // 2,
+                padding=effective_kernel_size // 2,
                 stride=stride,
+                dilation=dilation,
                 groups=exp_ch,
                 bias=False,
             ),
             nn.BatchNorm2d(exp_ch),
             activation(inplace=True),
-        ]
-        # SE goes after activation. This is where the paper is unclear. In e.g.
-        # MNASNet, for instance, SE goes after activation. I've done runs
-        # with activation both before and after, and thus far, the results were
-        # better with activation before SE. Still not as good as the paper
-        # claims, but close enough for practical work.
+        )
+
         if se_ratio is not None:
-            layers += [_SqueezeAndExcitation(exp_ch, se_ratio)]
-        layers += [  # Linear pointwise. Note that there's no activation afterwards.
-            nn.Conv2d(exp_ch, out_ch, 1, bias=False),
-            nn.BatchNorm2d(out_ch),
-        ]
-        self.layers = nn.Sequential(*layers)
+            self.se = _SqueezeAndExcitation(exp_ch, se_ratio)
+
+        # Linear pointwise. Note that there's no activation afterwards.
+        self.contract = nn.Sequential(
+            nn.Conv2d(exp_ch, out_ch, 1, bias=False), nn.BatchNorm2d(out_ch)
+        )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        y = self.expand(x) if self.expand is not None else x
+        if self.keep_features:
+            self.features = y
+        y = self.dw_conv(y)
+        if self.se_ratio is not None:
+            y = self.se(y)
+        y = self.contract(y)
         if self.apply_residual:
-            return self.layers(x) + x
-        else:
-            return self.layers(x)
+            y += x
+        return y
 
 
 def _round_to_multiple_of(val, divisor, round_up_bias=0.9):
@@ -203,7 +182,8 @@ class MobileNetV3(nn.Module):
         in_ch: int = 3,
         num_classes: int = 1000,
         dropout: float = 0.2,  # Per paper.
-        model_type: str = "small",
+        model_type: str = "large",
+        has_classifier: bool = True,
     ):
         super().__init__()
 
@@ -213,10 +193,11 @@ class MobileNetV3(nn.Module):
         self.in_ch = in_ch
         assert num_classes > 1
         self.num_classes = num_classes
-        assert model_type in CONFIG
+        assert model_type in conf.CONFIG
         self.model_type = model_type
+        self.has_classifier = has_classifier
 
-        config = CONFIG[model_type]
+        config = conf.CONFIG[model_type]
         # Scale the channels, forcing them to be multiples of 8, biased towards
         # the higher number of channels.
         for c in config:
@@ -238,42 +219,48 @@ class MobileNetV3(nn.Module):
         # Build the bottleneck stack.
         body = collections.OrderedDict()
         for idx, c in enumerate(config):
-            in_ch, exp_ch, out_ch, kernel_size, stride, se_ratio, activation = c
+            in_ch, exp_ch, out_ch, kernel_size, stride, dilation, se_ratio, activation = (
+                c
+            )
             body[f"bottleneck{idx}"] = _MobileNetV3Block(
                 in_ch,
                 exp_ch,
                 out_ch,
                 kernel_size,
                 stride,
+                dilation=dilation,
                 se_ratio=se_ratio,
                 activation=activation,
             )
-        self.body = nn.Sequential(body)
 
         # Build the classifier.
+        shallow_tail = any(x in model_type for x in ["_segmentation", "_detection"])
         if model_type == "large":
-            classifier_inner_ch = 960
+            last_conv_ch = 960 if not shallow_tail else 480
         elif model_type == "small":
-            classifier_inner_ch = 576
+            last_conv_ch = 576 if not shallow_tail else 288
         else:
             raise ValueError("Invalid model type")
 
         if alpha < 1.0:
-            classifier_inner_ch = _round_to_multiple_of(classifier_inner_ch * alpha, 8)
+            last_conv_ch = _round_to_multiple_of(last_conv_ch * alpha, 8)
+
+        body["last_conv"] = _ConvBnActivationBlock(
+            config[-1][2],
+            last_conv_ch,
+            1,
+            padding=0,
+            stride=1,
+            dilation=1,
+            activation="hardswish",
+        )
+
+        self.body = nn.Sequential(body)
 
         self.classifier = nn.Sequential(
-            _ConvBnActivationBlock(
-                config[-1][2],
-                classifier_inner_ch,
-                1,
-                padding=0,
-                stride=1,
-                dilation=1,
-                activation="hardswish",
-            ),
             nn.AdaptiveAvgPool2d(1),
             nn.Flatten(),
-            nn.Linear(classifier_inner_ch, 1280),
+            nn.Linear(last_conv_ch, 1280),
             HardSwish(inplace=True),
             nn.Dropout(p=dropout, inplace=True),
             nn.Linear(1280, num_classes),
@@ -282,4 +269,6 @@ class MobileNetV3(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = self.input_layer(x)
         x = self.body(x)
-        return self.classifier(x)
+        if self.has_classifier:
+            x = self.classifier(x)
+        return x
