@@ -18,6 +18,10 @@ achieves 66.51% and 73.82%  top1 correspondingly. I was not able to achieve
 Training was done with SGD, lr 0.5, wd 1e-5, 300 epochs. Cosine schedule with
 warmup.
 
+## Requirements
+
+PyTorch implementation requires PyTorch 1.3.0+, Keras requires TF 2.0.0+.
+
 ## Contributions
 
 Contributions are welcome. Please use Black to format the code.
