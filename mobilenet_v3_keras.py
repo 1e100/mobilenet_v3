@@ -1,5 +1,5 @@
-""" MobileNet V3 implementation.
-    Paper: https://arxiv.org/pdf/1905.02244.pdf """
+# MobileNet V3 implementation.
+# Paper: https://arxiv.org/pdf/1905.02244.pdf
 
 from typing import Tuple, Union, Dict
 import collections
@@ -53,7 +53,7 @@ class _SqueezeAndExcitation(keras.layers.Layer):
             padding="same",
             kernel_initializer=_CONV_INITIALIZER,
             kernel_regularizer=_REGULARIZER,
-            use_bias=False,
+            use_bias=True,
         )
         self.expand = keras.layers.Conv2D(
             channels,
@@ -61,7 +61,7 @@ class _SqueezeAndExcitation(keras.layers.Layer):
             padding="same",
             kernel_initializer=_CONV_INITIALIZER,
             kernel_regularizer=_REGULARIZER,
-            use_bias=False,
+            use_bias=True,
         )
 
     def call(self, x):

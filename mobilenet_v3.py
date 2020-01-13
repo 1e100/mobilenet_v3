@@ -47,8 +47,8 @@ class _SqueezeAndExcitation(nn.Module):
         super().__init__()
         reduced_ch = _round_to_multiple_of(channels * se_ratio, 8)
         # Note: official implementation uses bias on SE.
-        self.reduce = nn.Conv2d(channels, reduced_ch, 1, bias=False)
-        self.expand = nn.Conv2d(reduced_ch, channels, 1, bias=False)
+        self.reduce = nn.Conv2d(channels, reduced_ch, 1, bias=True)
+        self.expand = nn.Conv2d(reduced_ch, channels, 1, bias=True)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         y = x.mean([2, 3], keepdim=True)
