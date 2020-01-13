@@ -1,3 +1,5 @@
 *.pt filter=lfs diff=lfs merge=lfs -text
 *.pth filter=lfs diff=lfs merge=lfs -text
 *.pb filter=lfs diff=lfs merge=lfs -text
+mnv3-large-1.0-73.82-top1.pt filter=lfs diff=lfs merge=lfs -text
+mnv3-small-1.0-66.51-top1.pt filter=lfs diff=lfs merge=lfs -text
