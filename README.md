@@ -73,7 +73,9 @@ Training setup was as follows:
 },
 ```
 Normal augmentation was changed to crop less aggressively with scale setting
-within [0.2, 1.0] for faster convergence.
+within [0.2, 1.0] for faster convergence. For the large model the checkpoint
+is EMA smoothed with decay of 0.9999. Small model did not ultimately benefit
+from EMA.
 
 ## Requirements
 
