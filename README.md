@@ -11,10 +11,12 @@ you can get the relevant op outputs directly, but for PyTorch the way the paper
 describes head attachment requires that you grab the output from inside the
 block, so this helps you do it easily.
 
-There's also a PyTroch checkpoint for "small" and "large" MobileNet V3 that
-achieves 67.36% (which I suppose you could interpret as paper's 67.4%) and
-74.78%  top1 correspondingly. I was not able to achieve "paper" accuracies,
-even though I'm pretty sure the code is correct. 
+There are also PyTorch checkpoints for "small" and "large" MobileNet V3 that
+achieve 67.36% (which I suppose you could interpret as paper's 67.4%) and
+74.78%  top1 correspondingly. I was not able to achieve "paper" accuracy for
+the "large" model, even though I'm pretty sure the code is correct. 
+
+Keras checkpoints are TBD.
 
 Training setup was as follows:
 
