@@ -235,9 +235,9 @@ class MobileNetV3(nn.Module):
 
         # Build the classifier.
         shallow_tail = any(x in model_type for x in ["_segmentation", "_detection"])
-        if model_type == "large":
+        if "large" in model_type:
             last_conv_ch = 960 if not shallow_tail else 480
-        elif model_type == "small":
+        elif "small" in model_type:
             last_conv_ch = 576 if not shallow_tail else 288
         else:
             raise ValueError("Invalid model type")
