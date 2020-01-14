@@ -271,7 +271,7 @@ def create_mobilenet_v3(
     shallow_tail = any(x in model_type for x in ["_segmentation", "_detection"])
     if "large" in model_type:
         last_conv_ch = 960 if not shallow_tail else 480
-    elif "small" in mhodel_type:
+    elif "small" in model_type:
         last_conv_ch = 576 if not shallow_tail else 288
     else:
         raise ValueError("Invalid model type")
