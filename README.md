@@ -16,6 +16,9 @@ achieve 67.36% (which I suppose you could interpret as paper's 67.4%) and
 74.78%  top1 correspondingly. I was not able to achieve "paper" accuracy for
 the "large" model, even though I'm pretty sure the code is correct. 
 
+Also available are the following checkpoints:
+ - Large 1.0 Detection: top1=73.38%
+
 Keras checkpoints are TBD.
 
 Training setup was as follows:
